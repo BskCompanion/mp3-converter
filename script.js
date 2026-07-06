@@ -1,7 +1,10 @@
 import { FFmpeg } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js";
 import { fetchFile } from "https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js";
 
-const ffmpeg = new FFmpeg();
+const ffmpeg = new FFmpeg({
+    log: true,
+    corePath: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js"
+});
 
 const fileInput = document.getElementById("fileInput");
 const dropZone = document.getElementById("dropZone");
