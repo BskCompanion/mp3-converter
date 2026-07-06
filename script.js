@@ -13,9 +13,7 @@ const bitrateSelect = document.getElementById("bitrate");
 
 let selectedFile = null;
 
-/* ----------------------------
-   UI HELPERS
----------------------------- */
+
 
 function setStatus(text) {
     status.textContent = text;
