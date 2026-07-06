@@ -1,56 +1,186 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-
-<title>Audio Converter (MP4/M4A → MP3)</title>
-
-<link rel="stylesheet" href="style.css">
-
+    <meta charset="UTF-8">
+    <title>Offline MP3 Converter (Background Processing)</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 40px; background-color: #f4f4f9; display: flex; justify-content: center; }
+        .container { background: white; width: 100%; max-width: 480px; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; color: #333; }
+        input[type="file"] { margin: 15px 0; width: 100%; }
+        button { width: 100%; padding: 12px; font-size: 16px; font-weight: bold; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; transition: background 0.2s; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button:hover:not(:disabled) { background: #218838; }
+        #status { margin-top: 15px; font-size: 14px; color: #666; font-weight: 500; text-align: center;}
+        
+        /* Progress Bar Styling */
+        .progress-wrapper { display: none; margin-top: 20px; background: #e9ecef; border-radius: 6px; overflow: hidden; }
+        .progress-bar { width: 0%; height: 20px; background: #007bff; transition: width 0.1s linear; }
+        
+        #downloadArea { margin-top: 20px; text-align: center; }
+        .download-btn { display: block; padding: 12px; background: #007bff; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; text-align: center; box-shadow: 0 2px 4px rgba(0,123,255,0.3); }
+        .download-btn:hover { background: #0069d9; }
+    </style>
 </head>
 <body>
 
-<div class="app">
-
-    <h1>🎵 Audio Converter</h1>
-    <p class="sub">Convert MP4 / M4A / WAV / FLAC → MP3 (runs in browser)</p>
-
-    <div class="card">
-
-        <div id="dropZone" class="drop-zone">
-            <p>📂 Drag & Drop file here</p>
-            <p>or</p>
-            <input type="file" id="fileInput" accept="audio/*,video/*">
-        </div>
-
-        <div class="controls">
-
-            <label>Bitrate</label>
-            <select id="bitrate">
-                <option value="128k">128 kbps</option>
-                <option value="192k" selected>192 kbps</option>
-                <option value="256k">256 kbps</option>
-                <option value="320k">320 kbps</option>
-            </select>
-
-            <button id="convertBtn">Convert to MP3</button>
-
-        </div>
-
-        <div class="progress-container">
-            <progress id="progress" value="0" max="100"></progress>
-            <span id="status">Waiting for file...</span>
-        </div>
-
-        <div id="output"></div>
-
+<div class="container">
+    <h2>Offline MP3 Converter</h2>
+    <input type="file" id="audioInput" accept="audio/*">
+    <button id="convertBtn" disabled>Convert to MP3</button>
+    
+    <div class="progress-wrapper" id="progressWrapper">
+        <div class="progress-bar" id="progressBar"></div>
     </div>
-
+    
+    <div id="status">Select an audio file...</div>
+    <div id="downloadArea"></div>
 </div>
 
-<!-- IMPORTANT: JS will be provided in next step -->
-<script type="module" src="script.js"></script>
+<script>
+    // --- STEP 1: DEFINE WEB WORKER INLINE ---
+    // This script runs entirely inside a background thread so the UI stays smooth.
+    const workerBlobCode = `
+        importScripts('https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.all.min.js');
 
+        self.onmessage = function(e) {
+            const { leftChannel, rightChannel, channels, sampleRate } = e.data;
+            
+            // Convert Float32 arrays back to Int16 for Lame.js processing
+            const leftInt16 = new Int16Array(leftChannel.length);
+            const rightInt16 = new Int16Array(rightChannel.length);
+            for (let i = 0; i < leftChannel.length; i++) {
+                leftInt16[i] = leftChannel[i] < 0 ? leftChannel[i] * 0x8000 : leftChannel[i] * 0x7FFF;
+                rightInt16[i] = rightChannel[i] < 0 ? rightChannel[i] * 0x8000 : rightChannel[i] * 0x7FFF;
+            }
+
+            // Initialize LAME Encoder (128kbps)
+            const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, 128);
+            const mp3Data = [];
+            const sampleBlockSize = 1152;
+            const totalSamples = leftInt16.length;
+            
+            let lastProgressReport = 0;
+
+            for (let i = 0; i < totalSamples; i += sampleBlockSize) {
+                const leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
+                const rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
+                
+                let mp3buf;
+                if (channels === 2) {
+                    mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+                } else {
+                    mp3buf = mp3encoder.encodeBuffer(leftChunk);
+                }
+                if (mp3buf.length > 0) mp3Data.push(mp3buf);
+
+                // Send progress updates back to main thread
+                const progress = Math.round((i / totalSamples) * 100);
+                if (progress > lastProgressReport) {
+                    self.postMessage({ type: 'PROGRESS', progress: progress });
+                    lastProgressReport = progress;
+                }
+            }
+            
+            const mp3buf = mp3encoder.flush();
+            if (mp3buf.length > 0) mp3Data.push(mp3buf);
+
+            // Return final structural data back to main thread
+            self.postMessage({ type: 'COMPLETE', mp3Data: mp3Data });
+        };
+    `;
+
+    // --- STEP 2: MAIN THREAD LOGIC ---
+    const audioInput = document.getElementById('audioInput');
+    const convertBtn = document.getElementById('convertBtn');
+    const status = document.getElementById('status');
+    const downloadArea = document.getElementById('downloadArea');
+    const progressWrapper = document.getElementById('progressWrapper');
+    const progressBar = document.getElementById('progressBar');
+    
+    let audioBuffer = null;
+    let originalFileName = "converted.mp3";
+
+    // Create the background Worker object from blob code
+    const blob = new Blob([workerBlobCode], { type: 'application/javascript' });
+    const workerUrl = URL.createObjectURL(blob);
+    const encodingWorker = new Worker(workerUrl);
+
+    // Track original filename and pre-decode the audio file
+    audioInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const lastDotPosition = file.name.lastIndexOf('.');
+        originalFileName = (lastDotPosition !== -1) ? file.name.substring(0, lastDotPosition) + ".mp3" : file.name + ".mp3";
+
+        status.innerText = "Reading file data and parsing architecture...";
+        convertBtn.disabled = true;
+        downloadArea.innerHTML = ""; 
+        progressWrapper.style.display = "none";
+        progressBar.style.style = "0%";
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            
+            status.innerText = "File parsed successfully! Click convert.";
+            convertBtn.disabled = false;
+        } catch (err) {
+            status.innerText = "Error decoding audio natively. File format unsupported by browser.";
+            console.error(err);
+        }
+    });
+
+    // Handle Conversion Trigger
+    convertBtn.addEventListener('click', () => {
+        if (!audioBuffer) return;
+
+        status.innerText = "Converting in background... 0%";
+        convertBtn.disabled = true;
+        audioInput.disabled = true;
+        progressWrapper.style.display = "block";
+        progressBar.style.width = "0%";
+        downloadArea.innerHTML = "";
+
+        // Extract native channel Float32 layout blocks
+        const channels = audioBuffer.numberOfChannels;
+        const sampleRate = audioBuffer.sampleRate;
+        const leftChannel = audioBuffer.getChannelData(0);
+        const rightChannel = channels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
+
+        // Post raw buffers to worker thread using Zero-Copy Transferables for instant performance
+        encodingWorker.postMessage({
+            leftChannel: leftChannel,
+            rightChannel: rightChannel,
+            channels: channels,
+            sampleRate: sampleRate
+        }, [leftChannel.buffer, rightChannel.buffer]);
+    });
+
+    // Listen for Web Worker Updates (Progress & Completion)
+    encodingWorker.onmessage = function(e) {
+        const message = e.data;
+
+        if (message.type === 'PROGRESS') {
+            progressBar.style.width = `${message.progress}%`;
+            status.innerText = `Converting in background... ${message.progress}%`;
+        } 
+        else if (message.type === 'COMPLETE') {
+            progressBar.style.width = "100%";
+            status.innerText = "Conversion complete!";
+            
+            const fileBlob = new Blob(message.mp3Data, { type: 'audio/mp3' });
+            const fileUrl = URL.createObjectURL(fileBlob);
+            
+            downloadArea.innerHTML = `<a href="${fileUrl}" download="${originalFileName}" class="download-btn">Download ${originalFileName}</a>`;
+            
+            // Clean up state
+            convertBtn.disabled = false;
+            audioInput.disabled = false;
+        }
+    };
+</script>
 </body>
 </html>
