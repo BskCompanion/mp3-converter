@@ -1,167 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MP4/M4A to MP3 Converter</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 
-<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
+<title>Audio Converter (MP4/M4A → MP3)</title>
 
-<style>
-body{
-    font-family:Arial,sans-serif;
-    background:#f4f4f4;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    min-height:100vh;
-    margin:0;
-}
-
-.container{
-    background:white;
-    padding:30px;
-    border-radius:10px;
-    width:450px;
-    text-align:center;
-    box-shadow:0 0 15px rgba(0,0,0,.15);
-}
-
-h2{
-    margin-top:0;
-}
-
-button{
-    background:#2196f3;
-    color:white;
-    border:none;
-    padding:12px 20px;
-    border-radius:5px;
-    cursor:pointer;
-    font-size:16px;
-    margin-top:15px;
-}
-
-button:hover{
-    background:#1976d2;
-}
-
-#status{
-    margin-top:20px;
-    color:#333;
-}
-
-progress{
-    width:100%;
-    margin-top:15px;
-}
-</style>
+<link rel="stylesheet" href="style.css">
 
 </head>
 <body>
 
-<div class="container">
+<div class="app">
 
-<h2>Convert to MP3</h2>
+    <h1>🎵 Audio Converter</h1>
+    <p class="sub">Convert MP4 / M4A / WAV / FLAC → MP3 (runs in browser)</p>
 
-<input type="file" id="file">
+    <div class="card">
 
-<br>
+        <div id="dropZone" class="drop-zone">
+            <p>📂 Drag & Drop file here</p>
+            <p>or</p>
+            <input type="file" id="fileInput" accept="audio/*,video/*">
+        </div>
 
-<button id="convertBtn">
-Convert
-</button>
+        <div class="controls">
 
-<progress id="progress" value="0" max="100"></progress>
+            <label>Bitrate</label>
+            <select id="bitrate">
+                <option value="128k">128 kbps</option>
+                <option value="192k" selected>192 kbps</option>
+                <option value="256k">256 kbps</option>
+                <option value="320k">320 kbps</option>
+            </select>
 
-<div id="status"></div>
+            <button id="convertBtn">Convert to MP3</button>
 
-<div id="download"></div>
+        </div>
+
+        <div class="progress-container">
+            <progress id="progress" value="0" max="100"></progress>
+            <span id="status">Waiting for file...</span>
+        </div>
+
+        <div id="output"></div>
+
+    </div>
 
 </div>
 
-<script>
-
-const { FFmpeg } = FFmpegWASM;
-
-const ffmpeg = new FFmpeg();
-
-const progressBar = document.getElementById("progress");
-const status = document.getElementById("status");
-
-async function loadFFmpeg(){
-
-    if(ffmpeg.loaded) return;
-
-    status.innerHTML="Loading FFmpeg...";
-
-    ffmpeg.on("progress", ({progress})=>{
-        progressBar.value = progress*100;
-    });
-
-    await ffmpeg.load({
-        coreURL:"https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
-        wasmURL:"https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm"
-    });
-
-    status.innerHTML="Ready.";
-
-}
-
-document.getElementById("convertBtn").onclick = async ()=>{
-
-    const input = document.getElementById("file");
-
-    if(input.files.length===0){
-        alert("Choose a file.");
-        return;
-    }
-
-    await loadFFmpeg();
-
-    const file=input.files[0];
-
-    const ext=file.name.split('.').pop();
-
-    const inputName="input."+ext;
-
-    status.innerHTML="Reading file...";
-
-    const data=new Uint8Array(await file.arrayBuffer());
-
-    await ffmpeg.writeFile(inputName,data);
-
-    status.innerHTML="Converting...";
-
-    await ffmpeg.exec([
-        "-i",
-        inputName,
-        "-vn",
-        "-codec:a",
-        "libmp3lame",
-        "-q:a",
-        "2",
-        "output.mp3"
-    ]);
-
-    const output=await ffmpeg.readFile("output.mp3");
-
-    const blob=new Blob([output.buffer],{type:"audio/mpeg"});
-
-    const url=URL.createObjectURL(blob);
-
-    document.getElementById("download").innerHTML=`
-        <br>
-        <a href="${url}" download="output.mp3">
-            <button>Download MP3</button>
-        </a>
-    `;
-
-    status.innerHTML="Finished!";
-
-};
-
-</script>
+<!-- IMPORTANT: JS will be provided in next step -->
+<script type="module" src="script.js"></script>
 
 </body>
 </html>
